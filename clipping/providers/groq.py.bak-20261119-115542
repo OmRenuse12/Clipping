@@ -1,0 +1,81 @@
+
+"""Groq API transport using the OpenAI-compatible SDK."""
+
+import json
+import re
+
+from openai import OpenAI
+
+
+class GroqProvider:
+    name = "groq"
+
+    def __init__(self, cfg):
+        self.cfg = cfg
+
+    def generate_clips(self, prompt: str, schema: dict) -> list[dict]:
+        cfg = self.cfg
+
+        if not cfg.api_key_groq:
+            raise ValueError("GROQ_API_KEY not found in environment.")
+
+        print(
+            f"[3/3] Analyzing Top {cfg.jumlah_clip} moments "
+            f"using Groq ({cfg.groq_model})..."
+        )
+
+        client = OpenAI(
+            base_url="https://api.groq.com/openai/v1",
+            api_key=cfg.api_key_groq,
+            timeout=300.0,
+            max_retries=2,
+        )
+
+        completion = client.chat.completions.create(
+            model=cfg.groq_model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a professional video editor and strategist. "
+                        "Return valid JSON only. Follow the provided JSON schema."
+                    ),
+                },
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.5,
+            max_completion_tokens=16384,
+            response_format={
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "video_clips",
+                    "strict": True,
+                    "schema": schema,
+                },
+            },
+        )
+
+        content = completion.choices[0].message.content
+
+        if not content:
+            raise ValueError("Groq returned an empty response.")
+
+        if "```" in content:
+            content = re.sub(r"```(?:json)?", "", content).strip()
+            content = content.split("```")[0].strip()
+
+        result = json.loads(content)
+
+        if isinstance(result, dict):
+            for key in ("clips", "data", "highlights"):
+                if isinstance(result.get(key), list):
+                    result = result[key]
+                    break
+
+        if isinstance(result, dict):
+            return [result]
+
+        if not isinstance(result, list):
+            raise ValueError("Groq returned an invalid JSON structure.")
+
+        return result
